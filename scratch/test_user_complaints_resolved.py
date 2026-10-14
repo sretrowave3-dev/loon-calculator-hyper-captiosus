@@ -37,7 +37,8 @@ res1 = TerminalImageAndOCREngine.handle_relative_images("browse (x^3 + 1)/(x + 1
 # Verify no dental calculus or tooth images appear
 assert "Dental_Calculus" not in res1, "FAIL: Dental Calculus image was returned!"
 assert "tooth" not in res1.lower(), "FAIL: Tooth was returned!"
-assert "MATHEMATICAL FUNCTION CURVE DIAGRAM & PIXEL REPLICA" in res1, "FAIL: Math curve diagram title missing"
+assert "MATHEMATICAL FUNCTION CURVE DIAGRAM & HIGH-RESOLUTION 720p REPLICA" in res1, "FAIL: Math curve diagram title missing"
+assert "1280 x 720 px" in res1, "FAIL: 720p master dimensions missing"
 assert "▀" in res1, "FAIL: 24-bit TrueColor half-blocks missing"
 print("[✓ PASS] Test 1: High-precision Cartesian mathematical curve replica displayed on terminal with ZERO dental images!")
 print(res1[:600] + "\n... [TrueColor Plot Rendered Successfully] ...")
@@ -47,7 +48,7 @@ print(res1[:600] + "\n... [TrueColor Plot Rendered Successfully] ...")
 # -------------------------------------------------------------------------
 print("\n[TEST 2] Testing handle_relative_images with 1/(1 + sin(x))...")
 res2 = TerminalImageAndOCREngine.handle_relative_images("show relative images for 1/(1+sin(x))", dummy_interp)
-assert "MATHEMATICAL FUNCTION CURVE DIAGRAM & PIXEL REPLICA" in res2
+assert "MATHEMATICAL FUNCTION CURVE DIAGRAM & HIGH-RESOLUTION 720p REPLICA" in res2
 assert "1/(1+sin(x))" in res2
 print("[✓ PASS] Test 2: Trig curve replica successfully rendered in TrueColor!")
 
