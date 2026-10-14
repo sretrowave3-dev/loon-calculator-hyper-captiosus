@@ -1,0 +1,82 @@
+================================================================================
+                     SMART CALCULUS LOCKER / DOSSIER EXPORT                      
+                     Exported on: 2026-10-14 19:39:16
+================================================================================
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ LOCKER DOSSIER: JEE_KING_Q1                                                ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+  📁 Entry Name      : jee_king_q1
+  📅 Saved Timestamp : 2026-10-14 19:21:39
+  ❓ Problem / Query : integrate sin(x)/(sin(x) + cos(x)) from 0 to pi/2
+  📐 Function/Formula: ∫ [0 to pi/2] sin(x)/(sin(x) + cos(x)) dx
+  🏷️ Tags            : integrate
+
+  📋 Step-by-Step Resolution / Derivation:
+     • Apply King's Property: I = ∫ [0 to 1.571] f(x) dx = ∫ [0 to 1.571] f(1.571 - x) dx
+     • Add both integral forms: 2*I = ∫ [0 to 1.571] [f(x) + f(1.571 - x)] dx
+     • Algebraic Simplification: f(x) + f(1.571 - x) = 1 (Identically Constant)
+     • Evaluate Constant Integral: 2*I = 1 * (1.571 - 0) = 1.5708
+     • Solve for I: I = 1.5708 / 2 = 0.78539816
+
+  🎯 Evaluated Result / Answer:
+     >>> 0.7853981634
+
+  📝 User Notes (Dos Remarks):
+     Classic King property problem | Remember to multiply by 1/2 after adding flipped integral!
+──────────────────────────────────────────────────────────────────────────────
+  💡 Actions: 'locker run jee_king_q1' | 'locker rename jee_king_q1 <new>' | 'locker tag jee_king_q1 <tags>' | 'locker delete jee_king_q1'
+
+================================================================================
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ LOCKER DOSSIER: JEE_LEIBNIZ_Q2                                             ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+  📁 Entry Name      : jee_leibniz_q2
+  📅 Saved Timestamp : 2026-10-14 19:21:40
+  ❓ Problem / Query : differentiate integral of sin(t) from 0 to x^2
+  📐 Function/Formula: ∫ [0 to x^2] sin(t) dx
+  🏷️ Tags            : integrate
+
+  📋 Step-by-Step Resolution / Derivation:
+     • Method: Simpson's 1/3 Rule
+     • Error +/- 0.00e+00
+
+  🎯 Evaluated Result / Answer:
+     >>> 0.0000000000
+
+  📝 User Notes (Dos Remarks):
+     
+──────────────────────────────────────────────────────────────────────────────
+  💡 Actions: 'locker run jee_leibniz_q2' | 'locker rename jee_leibniz_q2 <new>' | 'locker tag jee_leibniz_q2 <tags>' | 'locker delete jee_leibniz_q2'
+
+================================================================================
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ LOCKER DOSSIER: FINAL_TESTED_ENTRY                                         ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+  📁 Entry Name      : final_tested_entry
+  📅 Saved Timestamp : 2026-10-14 19:39:16
+  ❓ Problem / Query : limit of (sin(x) - x)/x^3 as x -> 0
+  📐 Function/Formula: (sin(x) - x)/x^3
+  🏷️ Tags            : limit, calculus, jee
+
+  📋 Step-by-Step Resolution / Derivation:
+     • Problem Statement: Evaluate lim (x -> 0) of f(x) = (sin(x) - x)/x^3
+     • Indeterminate Form Check: As x -> 0, Numerator -> 0 and Denominator -> 0.
+     • Form [0/0] Detected: Applying L'Hôpital's Rule iteratively: lim [N(x)/D(x)] = lim [N'(x)/D'(x)].
+     • Iteration 1: d/dx[sin(x) - x] = cos(x) - 1 | d/dx[x ** 3] = 3 * (x ^ 2)
+     • Iteration 2: d/dx[cos(x) - 1] = -1 * sin(x) | d/dx[3 * (x ^ 2)] = 3 * (2 * x)
+     • Iteration 3: d/dx[-1 * sin(x)] = -1 * cos(x) | d/dx[3 * (2 * x)] = 6
+     • Evaluated: -1 / 6 = -1/6
+
+  🎯 Evaluated Result / Answer:
+     >>> -1/6
+
+  📝 User Notes (Dos Remarks):
+     
+──────────────────────────────────────────────────────────────────────────────
+  💡 Actions: 'locker run final_tested_entry' | 'locker rename final_tested_entry <new>' | 'locker tag final_tested_entry <tags>' | 'locker delete final_tested_entry'
+
+================================================================================
+
