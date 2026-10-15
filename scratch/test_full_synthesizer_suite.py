@@ -479,8 +479,8 @@ test_queries = [
 for tq in test_queries:
     sol = DirectSolutionSynthesizer.synthesize_direct_solution(tq)
     formatted = DirectSolutionSynthesizer.format_solution_display(
-        tq, sol, "https://gemini.google.com/app/6930d10672c1261c",
-        "Program Integration Preparation - Google Gemini",
+        tq, sol, "https://gemini.google.com/app",
+        "Google Gemini Chat Session",
         "⚡ AUTO-ROUTED TO GEMINI | OUT OF MATH DOMAIN"
     )
     print(formatted)

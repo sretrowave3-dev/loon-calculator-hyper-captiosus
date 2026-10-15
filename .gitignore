@@ -6,6 +6,11 @@
 node_modules/
 #IGNORE CACHE
 .cache/
+__pycache__/
+*.py[cod]
 #ignore control_pad
 *control_pad.c
 *control_pad.exe
+#ignore generated bitmaps and weights
+*.bmp
+*.pt
