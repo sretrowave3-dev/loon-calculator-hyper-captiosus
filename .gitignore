@@ -1,6 +1,8 @@
-__pycache__/
-*.py[cod]
-learned_patterns.json
-smart_gui_state.json
-smart_profile.json
-.vscode/
+#ignore json data files
+*.json
+#ignore log files
+*.log
+#ignore node_modules folder
+node_modules/
+#IGNORE CACHE
+.cache/

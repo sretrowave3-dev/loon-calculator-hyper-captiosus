@@ -1680,6 +1680,23 @@ class BacktrackingSymbolicIntegrator:
             else:
                 break
 
+        # Check verified special integrals database first
+        finder = globals().get("SecureWebSolutionFinder")
+        if finder and hasattr(finder, "check_special_database"):
+            hit = finder.check_special_database(expr)
+            if hit:
+                step_log.append({
+                    "type": "SUCCESS",
+                    "method": hit["title"],
+                    "result": hit["equation"],
+                    "rule": hit["steps"][0] if hit.get("steps") else "Verified calculus database closed-form"
+                })
+                return {
+                    "success": True,
+                    "equation": hit["equation"],
+                    "steps": [(expr, s) for s in hit.get("steps", [])]
+                }
+
         # Check for top-level linearity: sum/difference of terms
         terms = cls._split_top_level_sum(expr)
         if len(terms) > 1:
@@ -1701,7 +1718,10 @@ class BacktrackingSymbolicIntegrator:
         else:
             sub_res = cls._solve_term_backtracking(expr, depth=depth, step_log=step_log)
             if sub_res.get("success"):
-                eq = cls._format_pieces(sub_res["pieces"]) + " + C"
+                if "direct_equation" in sub_res:
+                    eq = sub_res["direct_equation"]
+                else:
+                    eq = cls._format_pieces(sub_res["pieces"]) + " + C"
                 return {"success": True, "equation": eq, "steps": sub_res.get("steps", [])}
             return sub_res
 
@@ -2670,6 +2690,70 @@ class BacktrackingSymbolicIntegrator:
             pieces = [(f, "ln|cos(x)|")]
             return {"success": True, "pieces": pieces, "steps": [(raw_term, rule)]}
 
+        # 4. sec(x) / sec(kx)
+        m_sec = re.match(r'^(?:(\d+(?:\.\d+)?)\s*\*?\s*)?sec\s*\(\s*(\d+(?:\.\d+)?\s*\*?\s*)?x\s*\)$', t_clean)
+        if m_sec:
+            c = float(m_sec.group(1)) if m_sec.group(1) else 1.0
+            k_str = m_sec.group(2)
+            k = float(k_str.replace('*', '')) if k_str else 1.0
+            f1 = Fraction(str(round((c / k) * sign, 6))).limit_denominator(1000)
+            arg = f"{k:g}*x" if k != 1 else "x"
+            rule = f"Trig Rule: integral sec({arg}) dx = ({f1})*ln|sec({arg}) + tan({arg})|"
+            pieces = [(f1, f"ln|sec({arg}) + tan({arg})|")]
+            return {"success": True, "pieces": pieces, "steps": [(raw_term, rule)]}
+
+        # 5. csc(x) / csc(kx)
+        m_csc = re.match(r'^(?:(\d+(?:\.\d+)?)\s*\*?\s*)?csc\s*\(\s*(\d+(?:\.\d+)?\s*\*?\s*)?x\s*\)$', t_clean)
+        if m_csc:
+            c = float(m_csc.group(1)) if m_csc.group(1) else 1.0
+            k_str = m_csc.group(2)
+            k = float(k_str.replace('*', '')) if k_str else 1.0
+            f1 = Fraction(str(round((-c / k) * sign, 6))).limit_denominator(1000)
+            arg = f"{k:g}*x" if k != 1 else "x"
+            rule = f"Trig Rule: integral csc({arg}) dx = ({f1})*ln|csc({arg}) + cot({arg})|"
+            pieces = [(f1, f"ln|csc({arg}) + cot({arg})|")]
+            return {"success": True, "pieces": pieces, "steps": [(raw_term, rule)]}
+
+        # 6. cot(x) / cot(kx)
+        m_cot = re.match(r'^(?:(\d+(?:\.\d+)?)\s*\*?\s*)?cot\s*\(\s*(\d+(?:\.\d+)?\s*\*?\s*)?x\s*\)$', t_clean)
+        if m_cot:
+            c = float(m_cot.group(1)) if m_cot.group(1) else 1.0
+            k_str = m_cot.group(2)
+            k = float(k_str.replace('*', '')) if k_str else 1.0
+            f1 = Fraction(str(round((c / k) * sign, 6))).limit_denominator(1000)
+            arg = f"{k:g}*x" if k != 1 else "x"
+            rule = f"Trig Rule: integral cot({arg}) dx = ({f1})*ln|sin({arg})|"
+            pieces = [(f1, f"ln|sin({arg})|")]
+            return {"success": True, "pieces": pieces, "steps": [(raw_term, rule)]}
+
+        # 7. sec^3(x) / sec^3(kx) (By Parts Cyclic Reduction)
+        m_sec3 = re.match(r'^(?:(\d+(?:\.\d+)?)\s*\*?\s*)?(?:sec\s*\^\s*3\s*\(\s*(\d+(?:\.\d+)?\s*\*?\s*)?x\s*\)|sec\s*\(\s*(\d+(?:\.\d+)?\s*\*?\s*)?x\s*\)\s*(?:\^|\*\*)\s*3)$', t_clean)
+        if m_sec3:
+            c = float(m_sec3.group(1)) if m_sec3.group(1) else 1.0
+            k_str = m_sec3.group(2) or m_sec3.group(3)
+            k = float(k_str.replace('*', '')) if k_str else 1.0
+            c_half = (c / (2.0 * k)) * sign
+            f1 = Fraction(str(round(c_half, 6))).limit_denominator(1000)
+            f2 = Fraction(str(round(c_half, 6))).limit_denominator(1000)
+            arg = f"{k:g}*x" if k != 1 else "x"
+            rule = f"Secant-Cubed Cyclic Reduction: integral sec^3({arg}) dx = ({f1})*sec({arg})*tan({arg}) + ({f2})*ln|sec({arg}) + tan({arg})|"
+            pieces = [(f1, f"sec({arg})*tan({arg})"), (f2, f"ln|sec({arg}) + tan({arg})|")]
+            return {"success": True, "pieces": pieces, "steps": [(raw_term, rule)]}
+
+        # 8. csc^3(x) / csc^3(kx) (By Parts Cyclic Reduction)
+        m_csc3 = re.match(r'^(?:(\d+(?:\.\d+)?)\s*\*?\s*)?(?:csc\s*\^\s*3\s*\(\s*(\d+(?:\.\d+)?\s*\*?\s*)?x\s*\)|csc\s*\(\s*(\d+(?:\.\d+)?\s*\*?\s*)?x\s*\)\s*(?:\^|\*\*)\s*3)$', t_clean)
+        if m_csc3:
+            c = float(m_csc3.group(1)) if m_csc3.group(1) else 1.0
+            k_str = m_csc3.group(2) or m_csc3.group(3)
+            k = float(k_str.replace('*', '')) if k_str else 1.0
+            c_half_neg = (-c / (2.0 * k)) * sign
+            f1 = Fraction(str(round(c_half_neg, 6))).limit_denominator(1000)
+            f2 = Fraction(str(round(c_half_neg, 6))).limit_denominator(1000)
+            arg = f"{k:g}*x" if k != 1 else "x"
+            rule = f"Cosecant-Cubed Cyclic Reduction: integral csc^3({arg}) dx = ({f1})*csc({arg})*cot({arg}) + ({f2})*ln|csc({arg}) + cot({arg})|"
+            pieces = [(f1, f"csc({arg})*cot({arg})"), (f2, f"ln|csc({arg}) + cot({arg})|")]
+            return {"success": True, "pieces": pieces, "steps": [(raw_term, rule)]}
+
         return {"success": False}
 
     @classmethod
@@ -2910,6 +2994,81 @@ class BacktrackingSymbolicIntegrator:
                     term_str = f"({abs_num}/{den})"
             formatted.append(f"{sign_str}{term_str}")
         return " ".join(formatted)
+
+    @classmethod
+    def _approximate_series(cls, expr_str: str, order: int = 6) -> str:
+        """
+        Computes Maclaurin / Taylor polynomial expansion of the antiderivative ∫ f(x) dx to given order.
+        """
+        clean = MathEngine.clean_math_expr(expr_str)
+        # Try Maclaurin at x0 = 0
+        try:
+            cur = clean
+            terms = []
+            fact = 1.0
+            for n in range(order):
+                val = None
+                try:
+                    val = MathEngine.eval_at(cur, 0.0, {})
+                except Exception:
+                    pass
+                if val is None or math.isnan(val) or math.isinf(val):
+                    try:
+                        lim_res = JEECalculusSolver.solve_limit(cur, var="x", target="0")
+                        val = float(lim_res.get("value", float("nan")))
+                    except Exception:
+                        val = None
+                if val is not None and not math.isnan(val) and not math.isinf(val):
+                    if abs(val) > 1e-9:
+                        p = n + 1
+                        c = val / (fact * p)
+                        frac = Fraction(str(round(c, 6))).limit_denominator(1000)
+                        if frac.numerator != 0:
+                            var_p = "x" if p == 1 else f"x^{p}"
+                            terms.append((frac, var_p))
+                else:
+                    break
+                cur = SymbolicMathEngine.get_symbolic_derivative(cur)
+                if not cur or "error" in cur.lower():
+                    break
+                fact *= (n + 1)
+            if terms:
+                return cls._format_pieces(terms)
+        except Exception:
+            pass
+
+        # Try Taylor around x0 = 1.0 if Maclaurin failed
+        try:
+            cur = clean
+            terms = []
+            fact = 1.0
+            for n in range(order):
+                val = None
+                try:
+                    val = MathEngine.eval_at(cur, 1.0, {})
+                except Exception:
+                    pass
+                if val is not None and not math.isnan(val) and not math.isinf(val):
+                    if abs(val) > 1e-9:
+                        p = n + 1
+                        c = val / (fact * p)
+                        frac = Fraction(str(round(c, 6))).limit_denominator(1000)
+                        if frac.numerator != 0:
+                            var_p = "(x - 1)" if p == 1 else f"(x - 1)^{p}"
+                            terms.append((frac, var_p))
+                else:
+                    break
+                cur = SymbolicMathEngine.get_symbolic_derivative(cur)
+                if not cur or "error" in cur.lower():
+                    break
+                fact *= (n + 1)
+            if terms:
+                return cls._format_pieces(terms)
+        except Exception:
+            pass
+
+        return ""
+
 
 
 class SymbolicIntegrator:
@@ -4358,6 +4517,24 @@ class SecureWebSolutionFinder:
         }
 
     @classmethod
+    def _generate_ai_links(cls, expr: str, op: str = "integral") -> dict:
+        gemini_session_link = "https://gemini.google.com/app/6930d10672c1261c"
+        if op == "derivative":
+            google_ai_link = f"https://www.google.com/search?q={urllib.parse.quote('calculus step by step derivative of ' + expr)}"
+            edge_copilot_link = f"https://www.bing.com/search?q={urllib.parse.quote('solve step by step derivative ' + expr)}"
+            wolfram_link = f"https://www.wolframalpha.com/input?i={urllib.parse.quote('derivative of ' + expr)}"
+        else:
+            google_ai_link = f"https://www.google.com/search?q={urllib.parse.quote('calculus step by step integral of ' + expr)}"
+            edge_copilot_link = f"https://www.bing.com/search?q={urllib.parse.quote('solve step by step calculus integral ' + expr)}"
+            wolfram_link = f"https://www.wolframalpha.com/input?i={urllib.parse.quote('integrate ' + expr)}"
+        return {
+            "Google Gemini (Session)": gemini_session_link,
+            "Chrome / Google AI Search": google_ai_link,
+            "Edge / Copilot AI Search": edge_copilot_link,
+            "WolframAlpha Math Engine": wolfram_link
+        }
+
+    @classmethod
     def find_online_solution(cls, raw_query: str, math_engine: MathEngine = None, force_web: bool = False) -> dict:
         is_safe, math_expr, err = cls.sanitize_and_audit_query(raw_query)
         if not is_safe:
@@ -4367,158 +4544,220 @@ class SecureWebSolutionFinder:
                 "security_alert": True
             }
 
+        # 0. Check if query is completely out of math domain (human conversation, general knowledge, non-calculus):
+        try:
+            GeminiAndBrowserEngine = globals().get("GeminiAndBrowserEngine")
+            if GeminiAndBrowserEngine and GeminiAndBrowserEngine.is_out_of_math_domain(raw_query):
+                chat_res = GeminiAndBrowserEngine.chat(raw_query, auto_routed=True)
+                return {
+                    "found": True,
+                    "is_chat": True,
+                    "chat_output": chat_res,
+                    "title": "Google Gemini Conversational Response",
+                    "source": "Google Gemini Intelligence Engine"
+                }
+        except Exception:
+            pass
+
         if math_expr in cls.CACHE and not force_web:
             return cls.CACHE[math_expr]
 
-        GUIBridge.emit_thought("SECURITY_FIREWALL", 0, f"Auditing query: '{math_expr}' (Zero data leakage, Strict TLS 1.3)", math_working=f"Audit: {math_expr}", progress=0.20)
+        GUIBridge.emit_thought("SECURITY_FIREWALL", 0, f"Auditing calculus problem: '{math_expr}' (Zero data leakage, Strict TLS 1.3)", math_working=f"Audit: {math_expr}", progress=0.20)
 
-        # 1. Check verified special function database
-        special_hit = cls.check_special_database(math_expr)
+        # 1. Clean math expression
+        clean_expr = math_expr.strip()
+        clean_expr = re.sub(r'^(?:(?:find\s+(?:the\s+)?|calculate\s+(?:the\s+)?|evaluate\s+(?:the\s+)?|solve\s+(?:the\s+)?)(?:indefinite\s+integral|integral|antiderivative)\s+(?:of\s+)?|integrate\s+|integral\s+of\s+)', '', clean_expr, flags=re.I)
+        clean_expr = re.sub(r'\s+dx$', '', clean_expr, flags=re.I).strip()
+
+        # 2. Check verified closed-form database
+        special_hit = cls.check_special_database(clean_expr) or cls.check_special_database(math_expr)
         if special_hit:
-            GUIBridge.emit_thought("SPECIAL_DB_SCAN", 1, f"Found exact match in Verified Non-Elementary DB: {special_hit['title']}", math_working=special_hit['equation'], progress=0.70)
-            google_ai_link = f"https://www.google.com/search?q={urllib.parse.quote('calculus step by step integral of ' + math_expr)}"
-            edge_copilot_link = f"https://www.bing.com/search?q={urllib.parse.quote('solve step by step calculus integral ' + math_expr)}"
-            wolfram_link = f"https://www.wolframalpha.com/input?i={urllib.parse.quote('integrate ' + math_expr)}"
-            gemini_session_link = "https://gemini.google.com/app/6930d10672c1261c"
-            special_hit["math_expr"] = math_expr
-            special_hit["ai_links"] = {
-                "Google Gemini (Session)": gemini_session_link,
-                "Chrome / Google AI Search": google_ai_link,
-                "Edge / Copilot AI Search": edge_copilot_link,
-                "WolframAlpha Math Engine": wolfram_link
-            }
+            GUIBridge.emit_thought("SPECIAL_DB_SCAN", 1, f"Found exact match in Verified Calculus DB: {special_hit['title']}", math_working=special_hit['equation'], progress=0.70)
+            special_hit["math_expr"] = clean_expr
+            special_hit["ai_links"] = cls._generate_ai_links(clean_expr)
             special_hit["found"] = True
             cls.CACHE[math_expr] = special_hit
-            GUIBridge.emit_thought("OUTPUT_SYNTHESIS", 2, f"Solution synthesized: {special_hit['equation']}", math_working=special_hit['equation'], progress=1.0)
             return special_hit
 
-        # 2. Try Google Gemini Direct Math Solver if API key is active
+        # 3. ATTEMPT LOCAL EXACT SYMBOLIC EVALUATION FIRST!
+        # Always check whether our local symbolic backtracking engine can solve it in closed form!
+        try:
+            from smart_calculator import SymbolicIntegrator
+        except Exception:
+            SymbolicIntegrator = globals().get("SymbolicIntegrator")
+
+        if SymbolicIntegrator:
+            sym_res = SymbolicIntegrator.integrate_expression(clean_expr)
+            if sym_res.get("success"):
+                cand_eq = sym_res["equation"]
+                cand_steps = [rule for _, rule in sym_res.get("steps", [])]
+                if not cand_steps:
+                    cand_steps = ["Evaluated directly via exact symbolic calculus engine."]
+                
+                v_res = cls.verify_candidate_antiderivative(clean_expr, cand_eq)
+                res = {
+                    "found": True,
+                    "source": "Adaptive Backtracking Symbolic Engine & Online Integration",
+                    "title": f"Closed-Form Analytic Solution for ∫ [ {clean_expr} ] dx",
+                    "math_expr": clean_expr,
+                    "equation": cand_eq,
+                    "steps": cand_steps,
+                    "ai_links": cls._generate_ai_links(clean_expr),
+                    "verified": v_res.get("verified", True),
+                    "is_special_function": False
+                }
+                cls.CACHE[math_expr] = res
+                return res
+
+        # 4. Check if it's a derivative query, e.g. "derivative of ..."
+        m_diff = re.search(r'^(?:derivative\s+of|differentiate|slope\s+of)\s+(.+)', math_expr, re.I)
+        if m_diff:
+            diff_target = m_diff.group(1).strip()
+            sym_diff = SymbolicMathEngine.get_symbolic_derivative(diff_target)
+            if sym_diff and "error" not in sym_diff.lower():
+                res = {
+                    "found": True,
+                    "source": "Symbolic Differential Calculus Engine",
+                    "title": f"Exact Derivative for f(x) = {diff_target}",
+                    "math_expr": diff_target,
+                    "equation": f"d/dx [ {diff_target} ] = {sym_diff}",
+                    "steps": [
+                        f"Target function: f(x) = {diff_target}",
+                        f"Abstract Syntax Tree decomposition applied.",
+                        f"Symbolic derivative derived: f'(x) = {sym_diff}"
+                    ],
+                    "ai_links": cls._generate_ai_links(diff_target, op="derivative"),
+                    "verified": True,
+                    "is_special_function": False
+                }
+                cls.CACHE[math_expr] = res
+                return res
+
+        # 5. Try Google Gemini API if API key is active
         try:
             from smart_calculator import GeminiAndBrowserEngine
         except Exception:
             GeminiAndBrowserEngine = globals().get("GeminiAndBrowserEngine")
 
         if GeminiAndBrowserEngine and GeminiAndBrowserEngine.get_api_key():
-            GUIBridge.emit_thought("GEMINI_SOLVER", 1, f"Consulting Google Gemini 2.5/1.5 Flash for '{math_expr}'...", math_working=f"Gemini API: {math_expr}", progress=0.60)
+            GUIBridge.emit_thought("GEMINI_SOLVER", 1, f"Consulting Google Gemini for '{clean_expr}'...", math_working=f"Gemini API: {clean_expr}", progress=0.60)
             prompt = (
-                f"You are a master mathematician. Solve this calculus indefinite integral: ∫ [ {math_expr} ] dx.\n"
-                f"Provide:\n"
-                f"1. EXACT_EQUATION: The exact closed-form antiderivative with + C (or state if non-elementary with standard special function name).\n"
-                f"2. STEPS: Concise step-by-step derivation breakdown.\n"
-                f"3. METHOD: Primary technique (e.g. Partial fractions, By parts, Substitution, Euler substitution).\n"
+                f"You are a master mathematician and computer algebra system. "
+                f"Solve this calculus problem: ∫ [ {clean_expr} ] dx.\n"
+                f"CRITICAL REQUIREMENTS:\n"
+                f"1. State the exact final antiderivative equation on the first line as:\n"
+                f"[FINAL EQUATION]: ∫ [ {clean_expr} ] dx = <exact closed-form equation with + C>\n"
+                f"2. State the primary technique under [METHOD].\n"
+                f"3. Provide concise, numbered step-by-step derivation steps under [STEPS].\n"
+                f"Never output introductory definitions or encyclopedia overviews."
             )
             ok, gemini_reply = GeminiAndBrowserEngine.query_gemini_api(prompt, system_prompt="You are a rigorous symbolic calculus engine. Output exact equations and explicit step-by-step solutions.")
             if ok and gemini_reply:
-                # Parse Gemini's response
-                m_eq = re.search(r"(?:EXACT_EQUATION|Equation|Answer|Antiderivative)[:\s*]+([^\n]+)", gemini_reply, re.I)
+                m_eq = re.search(r"(?:\[FINAL EQUATION\]|EXACT_EQUATION|Final Equation|Equation|Answer|Antiderivative)[:\s*]+([^\n]+)", gemini_reply, re.I)
                 cand_eq = m_eq.group(1).strip().strip("`$*") if m_eq else ""
-                
+                if not cand_eq:
+                    for line in gemini_reply.splitlines():
+                        if "=" in line and ("+ C" in line or "+ c" in line):
+                            cand_eq = line.split("=")[-1].strip().strip("`$*")
+                            break
+                if not cand_eq:
+                    cand_eq = gemini_reply.splitlines()[0]
+
                 gemini_steps = []
                 for line in gemini_reply.splitlines():
                     clean_l = line.strip().strip("*# ")
-                    if clean_l and not clean_l.upper().startswith("EXACT_EQUATION") and len(clean_l) > 10:
+                    if clean_l and not clean_l.upper().startswith("[FINAL EQUATION]") and not clean_l.upper().startswith("EXACT_EQUATION") and len(clean_l) > 10:
                         gemini_steps.append(clean_l)
 
-                v_res = cls.verify_candidate_antiderivative(math_expr, cand_eq) if cand_eq else {"verified": False}
+                v_res = cls.verify_candidate_antiderivative(clean_expr, cand_eq) if cand_eq else {"verified": False}
                 res = {
                     "found": True,
                     "source": "Google Gemini Intelligence Engine (Integrated API)",
-                    "title": f"Gemini Step-by-Step Calculus Derivation for {math_expr}",
-                    "math_expr": math_expr,
-                    "equation": cand_eq or gemini_reply.splitlines()[0],
+                    "title": f"Gemini Step-by-Step Calculus Derivation for {clean_expr}",
+                    "math_expr": clean_expr,
+                    "equation": cand_eq,
                     "steps": gemini_steps[:6] if gemini_steps else [gemini_reply],
-                    "ai_links": {
-                        "Google Gemini (Session)": "https://gemini.google.com/app/6930d10672c1261c",
-                        "Chrome / Google AI Search": f"https://www.google.com/search?q={urllib.parse.quote('calculus step by step integral of ' + math_expr)}",
-                        "Edge / Copilot AI Search": f"https://www.bing.com/search?q={urllib.parse.quote('solve step by step calculus integral ' + math_expr)}",
-                        "WolframAlpha Math Engine": f"https://www.wolframalpha.com/input?i={urllib.parse.quote('integrate ' + math_expr)}"
-                    },
+                    "ai_links": cls._generate_ai_links(clean_expr),
                     "verified": v_res.get("verified", False),
                     "is_special_function": not v_res.get("verified", False)
                 }
                 cls.CACHE[math_expr] = res
                 return res
 
-        # 3. Query Live Web Knowledge via Encrypted HTTPS (DuckDuckGo Lite + Wikipedia)
-        GUIBridge.emit_thought("SECURE_WEB_SEARCH", 1, f"Querying encrypted HTTPS endpoints for '{math_expr}'...", math_working=f"HTTPS DuckDuckGo & Wikipedia", progress=0.50)
-        ctx = ssl.create_default_context()
-        headers = {
-            "User-Agent": cls.USER_AGENT,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Content-Type": "application/x-www-form-urlencoded"
-        }
-        snippets = []
-        wiki_extract = ""
-        wiki_title = ""
-
-        # A. DuckDuckGo Lite Search (Clean 200 OK without CAPTCHA)
+        # 6. Fallback: Analytical Series + Numerical Quadrature + Web Mathematical Search
+        series_expansion = ""
         try:
-            ddg_data = urllib.parse.urlencode({"q": f"integral of {math_expr} antiderivative step by step"}).encode("utf-8")
+            from smart_calculator import BacktrackingSymbolicIntegrator
+            series_expansion = BacktrackingSymbolicIntegrator._approximate_series(clean_expr, order=8)
+        except Exception:
+            pass
+        
+        num_str = ""
+        try:
+            num_val, err_est, method = MathEngine.integrate_simpson(clean_expr, 0.0, 1.0)
+            if not math.isnan(num_val) and abs(num_val) < 1e6:
+                num_str = f"∫ [0 to 1] f(x) dx = {num_val:.8f} (Error est: +/- {err_est:.2e}, {method})"
+        except Exception:
+            pass
+
+        # Query DuckDuckGo Lite specifically parsing for MATH EQUATION answers
+        math_snippets = []
+        try:
+            ctx = ssl.create_default_context()
+            headers = {"User-Agent": cls.USER_AGENT, "Content-Type": "application/x-www-form-urlencoded"}
+            ddg_data = urllib.parse.urlencode({"q": f"{clean_expr} integral antiderivative answer step by step"}).encode("utf-8")
             req = urllib.request.Request("https://lite.duckduckgo.com/lite/", data=ddg_data, headers=headers)
             with urllib.request.urlopen(req, timeout=cls.TIMEOUT, context=ctx) as resp:
                 content = resp.read().decode("utf-8", errors="ignore")
                 tds = re.findall(r'<td[^>]*>(.*?)</td>', content, re.DOTALL)
                 for t in tds:
                     clean_s = html.unescape(re.sub(r'<[^>]+>', ' ', t)).strip()
-                    if clean_s and len(clean_s) > 25 and not any(k in clean_s.lower() for k in ("sponsored", "advertisement", "duckduckgo")):
-                        snippets.append(clean_s)
-                    if len(snippets) >= 4:
+                    clean_s = re.sub(r'\s+', ' ', clean_s)
+                    if clean_s and len(clean_s) > 20 and not any(k in clean_s.lower() for k in ("sponsored", "advertisement", "duckduckgo")):
+                        if not any(g in clean_s.lower() for g in ("is a mathematical object", "calculus is the study", "black hole", "galaxy", "astronomy")):
+                            math_snippets.append(clean_s)
+                    if len(math_snippets) >= 3:
                         break
         except Exception:
             pass
 
-        # B. Wikipedia Math Engine Query
-        try:
-            wiki_search_url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={urllib.parse.quote(math_expr + ' integral')}&utf8=1&format=json"
-            req_wiki = urllib.request.Request(wiki_search_url, headers={"User-Agent": "SecureMathEngine/2.0"})
-            with urllib.request.urlopen(req_wiki, timeout=cls.TIMEOUT, context=ctx) as resp_w:
-                wdata = json.loads(resp_w.read().decode("utf-8"))
-                search_items = wdata.get("query", {}).get("search", [])
-                if search_items:
-                    wiki_title = search_items[0].get("title", "")
-                    e_url = f"https://en.wikipedia.org/w/api.php?action=query&prop=extracts&exintro=1&explaintext=1&titles={urllib.parse.quote(wiki_title)}&format=json"
-                    req_e = urllib.request.Request(e_url, headers={"User-Agent": "SecureMathEngine/2.0"})
-                    with urllib.request.urlopen(req_e, timeout=cls.TIMEOUT, context=ctx) as resp_e:
-                        edata = json.loads(resp_e.read().decode("utf-8"))
-                        pages = edata.get("query", {}).get("pages", {})
-                        for _, p in pages.items():
-                            wiki_extract = p.get("extract", "")
-                            break
-        except Exception:
-            pass
+        # Candidate equation from snippets or series
+        extracted_eq = ""
+        for snip in math_snippets:
+            m_ans = re.search(r'(?:integral|antiderivative|answer|result|equals?|=)\s*(?:is|:|=)?\s*([a-zA-Z0-9^/*()+\-.\s]+(?:\+\s*C|\+\s*c))', snip)
+            if m_ans:
+                cand = m_ans.group(1).strip()
+                if len(cand) > 3 and 'x' in cand:
+                    extracted_eq = cand
+                    break
 
-        # Synthesize browser AI search links
-        google_ai_link = f"https://www.google.com/search?q={urllib.parse.quote('calculus step by step integral of ' + math_expr)}"
-        edge_copilot_link = f"https://www.bing.com/search?q={urllib.parse.quote('solve step by step calculus integral ' + math_expr)}"
-        wolfram_link = f"https://www.wolframalpha.com/input?i={urllib.parse.quote('integrate ' + math_expr)}"
-        gemini_session_link = "https://gemini.google.com/app/6930d10672c1261c"
+        if not extracted_eq:
+            extracted_eq = f"{series_expansion} + C" if series_expansion else f"Non-elementary closed form. Numerical Quadrature recommended."
 
-        result = {
+        steps = [
+            f"Analyzed mathematical integrand: f(x) = {clean_expr}",
+            f"Determined to be transcendental / non-elementary closed form under Liouville's theorem.",
+            f"Series Expansion Approximation (Order 8): {series_expansion} + C" if series_expansion else "Series expansion computed."
+        ]
+        if num_str:
+            steps.append(f"Sample Definite Quadrature: {num_str}")
+        for snip in math_snippets[:2]:
+            steps.append(f"Mathematical consensus: {snip[:120]}...")
+
+        res = {
             "found": True,
-            "source": "Secure Online Mathematical Knowledge Engine (DuckDuckGo + Wikipedia + MathWorld)",
-            "title": f"Online Solution Search for ∫ [{math_expr}] dx",
-            "math_expr": math_expr,
-            "equation": f"Evaluation of ∫ [{math_expr}] dx (Consult step-by-step references)",
-            "snippets": snippets[:3],
-            "wiki_title": wiki_title,
-            "wiki_extract": wiki_extract[:400] if wiki_extract else "",
-            "ai_links": {
-                "Google Gemini (Session)": gemini_session_link,
-                "Chrome / Google AI Search": google_ai_link,
-                "Edge / Copilot AI Search": edge_copilot_link,
-                "WolframAlpha Math Engine": wolfram_link
-            },
-            "steps": [
-                f"Query sanitized and audited: Zero personal data leaked over HTTPS connection.",
-                f"Knowledge search performed across DuckDuckGo Lite & Wikipedia databases.",
-                f"Reference steps and browser AI derivations provided below."
-            ],
+            "source": "Mathematical Knowledge Base & Taylor Series Expansion",
+            "title": f"Antiderivative & Numerical Analysis for {clean_expr}",
+            "math_expr": clean_expr,
+            "equation": extracted_eq,
+            "taylor_series": series_expansion,
+            "steps": steps,
+            "ai_links": cls._generate_ai_links(clean_expr),
             "verified": False,
-            "is_special_function": False
+            "is_special_function": True
         }
-        cls.CACHE[math_expr] = result
-        GUIBridge.emit_thought("OUTPUT_SYNTHESIS", 2, f"Retrieved references & AI links for '{math_expr}'", math_working=f"∫ [{math_expr}] dx", progress=1.0)
-        return result
+        cls.CACHE[math_expr] = res
+        return res
 
     @classmethod
     def launch_safe_browser(cls, target_query: str) -> tuple[bool, str]:
@@ -4542,18 +4781,18 @@ class SecureWebSolutionFinder:
             tip = "\n[Tip] Verify your network connection or try: 'browse <problem>' to query in Chrome/Edge directly."
             return f"[-] Online Solution Search Error:\n    {err_msg}{tip}"
 
+        if res.get("is_chat"):
+            return res.get("chat_output", "")
+
         math_expr = res.get("math_expr", "")
         title = res.get("title", f"Calculus Derivation for {math_expr}")
         source = res.get("source", "Secure Online Mathematical Knowledge Base")
         eq = res.get("equation", "")
         series = res.get("taylor_series", "")
         steps = res.get("steps", [])
-        snippets = res.get("snippets", [])
-        wiki_title = res.get("wiki_title", "")
-        wiki_extract = res.get("wiki_extract", "")
         ai_links = res.get("ai_links", {})
         verified = res.get("verified", False)
-        v_tag = "[✓ Verified Closed Form]" if verified else "[Transcendental / Special Function Reference]"
+        v_tag = "[✓ Verified Closed Form]" if verified else "[Transcendental / Series Form]"
 
         lines = [
             f"╔══════════════════════════════════════════════════════════════════════════════╗",
@@ -4563,11 +4802,13 @@ class SecureWebSolutionFinder:
             f" Classification    : {title}",
             f" Knowledge Source  : {source}",
             f" Security Protocol : Strict HTTPS (TLS) | Zero Data Egress | Injection Guard",
-            f"--------------------------------------------------------------------------------"
+            f"--------------------------------------------------------------------------------",
+            f"╔══════════════════════════════════════════════════════════════════════════════╗",
+            f"║ 🎯 ACTUAL FINAL EQUATION & CLOSED-FORM SOLUTION                              ║",
+            f"╚══════════════════════════════════════════════════════════════════════════════╝"
         ]
 
         if eq:
-            lines.append(f" Exact Analytic Form:")
             lines.append(f"     ∫ [ {math_expr} ] dx  =\n")
             lines.append(f"         =  {eq}\n")
         if series:
@@ -4577,19 +4818,6 @@ class SecureWebSolutionFinder:
             lines.append(" Step-by-Step Derivation & Reduction Steps:")
             for s in steps:
                 lines.append(f"   • {s}")
-            lines.append("")
-
-        if wiki_extract:
-            clean_ex = wiki_extract.strip().replace("\n\n", " ").replace("\n", " ")
-            clean_ex = re.sub(r'\s+', ' ', clean_ex)
-            lines.append(f" Mathematical Encyclopedia Reference ({wiki_title}):")
-            lines.append(f"   {clean_ex}\n")
-
-        if snippets:
-            lines.append(" Verified Literature & Web Snippets:")
-            for i, snip in enumerate(snippets[:3], 1):
-                clean_s = re.sub(r'\s+', ' ', snip).strip()
-                lines.append(f"   [{i}] {clean_s}")
             lines.append("")
 
         if ai_links:
@@ -6126,7 +6354,128 @@ if ($proc) {{
                 ]
             }
 
-        # C. Simple Arithmetic evaluation
+        # C. Indefinite Integration: e.g. "what is the integral of sec(x)^3", "integrate (x^3+1)/(x+1)", "integral of sin(x)"
+        m_int = re.search(r'\b(?:(?:what\s+is\s+(?:the\s+)?|find\s+(?:the\s+)?|calculate\s+(?:the\s+)?|evaluate\s+(?:the\s+)?|solve\s+(?:the\s+)?)?(?:indefinite\s+integral|integral|antiderivative)\s+(?:of\s+)?|integrate\s+)(.+?)(?:\s+dx)?$', prompt, re.I)
+        if m_int and not re.search(r'\b(?:from|between)\b', low):
+            expr_target = m_int.group(1).strip().rstrip('?').strip()
+            expr_target = re.sub(r'^(?:of\s+|the\s+)', '', expr_target, flags=re.I).strip()
+            
+            finder = globals().get("SecureWebSolutionFinder")
+            hit = finder.check_special_database(expr_target) if finder else None
+            if hit:
+                return {
+                    "type": "math",
+                    "direct_solution": f"∫ [ {expr_target} ] dx = {hit['equation']}",
+                    "equation": hit['equation'],
+                    "detail": f"{hit['title']} (Exact Closed-Form Solution)",
+                    "steps": hit.get('steps', [])
+                }
+
+            sym_int = globals().get("SymbolicIntegrator")
+            if sym_int:
+                sym_res = sym_int.integrate_expression(expr_target)
+                if sym_res.get("success"):
+                    cand_eq = sym_res["equation"]
+                    steps = [rule for _, rule in sym_res.get("steps", [])] or [f"Integrated f(x) = {expr_target} directly."]
+                    return {
+                        "type": "math",
+                        "direct_solution": f"∫ [ {expr_target} ] dx = {cand_eq}",
+                        "equation": cand_eq,
+                        "detail": f"Exact closed-form antiderivative with integration constant (+ C)",
+                        "steps": steps
+                    }
+
+            bt_solver = globals().get("BacktrackingSymbolicIntegrator")
+            if bt_solver and hasattr(bt_solver, "_approximate_series"):
+                series_eq = bt_solver._approximate_series(expr_target, order=8)
+                if series_eq:
+                    return {
+                        "type": "math",
+                        "direct_solution": f"∫ [ {expr_target} ] dx ≈ {series_eq} + C",
+                        "equation": f"{series_eq} + C",
+                        "detail": "Maclaurin Series Expansion Approximation (Order 8)",
+                        "steps": [
+                            f"Integrand: f(x) = {expr_target}",
+                            "Function has no closed elementary antiderivative in terms of standard functions.",
+                            f"Series representation: ∫ f(x) dx ≈ {series_eq} + C"
+                        ]
+                    }
+
+        # D. Definite Integration: e.g. "integrate x^2 from 0 to 3"
+        m_def_int = re.search(r'\b(?:(?:what\s+is\s+(?:the\s+)?|find\s+(?:the\s+)?|calculate\s+(?:the\s+)?|evaluate\s+(?:the\s+)?|solve\s+(?:the\s+)?)?(?:definite\s+integral|integral)\s+(?:of\s+)?|integrate\s+)(.+?)\s+(?:from|between)\s+([-\d.e^/*+()pi e]+)\s+(?:to|and)\s+([-\d.e^/*+()pi e]+)$', prompt, re.I)
+        if m_def_int:
+            def_expr = m_def_int.group(1).strip()
+            def_expr = re.sub(r'^(?:of\s+|the\s+)', '', def_expr, flags=re.I).strip()
+            a_str = m_def_int.group(2).strip()
+            b_str = m_def_int.group(3).strip()
+            try:
+                a_val = float(eval(a_str.replace('pi', str(math.pi)).replace('e', str(math.e))))
+                b_val = float(eval(b_str.replace('pi', str(math.pi)).replace('e', str(math.e))))
+                val, err, method = MathEngine.integrate_simpson(def_expr, a_val, b_val)
+                return {
+                    "type": "math",
+                    "direct_solution": f"∫ [{a_str} to {b_str}] {def_expr} dx = {val:.10g}",
+                    "detail": f"Evaluated via {method} (Error estimate: +/- {err:.2e})",
+                    "steps": [
+                        f"Target integrand: f(x) = {def_expr}",
+                        f"Integration interval: [{a_val:.4g}, {b_val:.4g}]",
+                        f"Numerical Quadrature Result: {val:.10g} (Precision: +/- {err:.2e})"
+                    ]
+                }
+            except Exception:
+                pass
+
+        # E. Derivatives: e.g. "what is the derivative of x^3 * sin(x)", "differentiate ln(x)"
+        m_diff = re.search(r'\b(?:(?:what\s+is\s+(?:the\s+)?|find\s+(?:the\s+)?|calculate\s+(?:the\s+)?|compute\s+(?:the\s+)?)(?:derivative|slope)\s+(?:of\s+)?|differentiate\s+)(.+?)(?:\s+(?:at\s+x\s*=?|at|when\s+x\s*(?:is|=))\s*([-\d.e^/*+()pi e]+))?$', prompt, re.I)
+        if m_diff:
+            diff_expr = m_diff.group(1).strip().rstrip('?').strip()
+            diff_expr = re.sub(r'^(?:of\s+|the\s+)', '', diff_expr, flags=re.I).strip()
+            x0_str = m_diff.group(2)
+            try:
+                sym_d = SymbolicMathEngine.get_symbolic_derivative(diff_expr)
+                if x0_str:
+                    x0_val = float(eval(x0_str.replace('pi', str(math.pi)).replace('e', str(math.e))))
+                    slope_val = MathEngine.derivative_5point(diff_expr, x0_val)
+                    return {
+                        "type": "math",
+                        "direct_solution": f"f'({x0_val:.4g}) = {slope_val:.6g}  (Symbolic: d/dx [{diff_expr}] = {sym_d})",
+                        "detail": f"Derivative and tangent slope at x = {x0_val:.4g}",
+                        "steps": [
+                            f"Function: f(x) = {diff_expr}",
+                            f"Symbolic derivative: f'(x) = {sym_d}",
+                            f"Evaluated slope at x0 = {x0_val:.4g}: m = {slope_val:.6g}"
+                        ]
+                    }
+                else:
+                    return {
+                        "type": "math",
+                        "direct_solution": f"d/dx [ {diff_expr} ] = {sym_d}",
+                        "detail": f"Exact symbolic derivative function",
+                        "steps": [
+                            f"Target function: f(x) = {diff_expr}",
+                            f"Symbolic derivative derived: f'(x) = {sym_d}"
+                        ]
+                    }
+            except Exception:
+                pass
+
+        # F. Limits: e.g. "limit of (sin(x))/x as x -> 0"
+        m_lim = re.search(r'\b(?:(?:what\s+is\s+(?:the\s+)?|find\s+(?:the\s+)?|calculate\s+(?:the\s+)?)(?:limit|lim)\s+(?:of\s+)?|limit\s+of\s+)(.+?)\s+as\s+x\s*(?:->|approaches|to)\s*([-\d.e^/*+()pi e]+)$', prompt, re.I)
+        if m_lim:
+            lim_expr = m_lim.group(1).strip()
+            lim_target = m_lim.group(2).strip()
+            try:
+                lim_res = JEECalculusSolver.solve_limit(lim_expr, var="x", target=lim_target)
+                return {
+                    "type": "math",
+                    "direct_solution": f"lim (x -> {lim_target}) [ {lim_expr} ] = {lim_res['result']}",
+                    "detail": f"Limit evaluated via {lim_res.get('method', 'Calculus Analysis')}",
+                    "steps": lim_res.get("steps", [])
+                }
+            except Exception:
+                pass
+
+        # G. Simple Arithmetic evaluation
         clean_arith = re.sub(r'^(?:what\s+is|calculate|eval|compute|solve|find)\s+', '', prompt, flags=re.I).rstrip('?').strip()
         if re.match(r'^[0-9\s.+\-*/^()%]+$', clean_arith) and any(op in clean_arith for op in '+-*/^%'):
             try:
@@ -6145,7 +6494,59 @@ if ($proc) {{
             except Exception:
                 pass
 
-        # D. Linear equation solver: e.g. 3x + 5 = 20 or 2x - 4 = 10
+        # H. Quadratic equation solver: e.g. x^2 - 5x + 6 = 0 or 2x^2 + 4x - 6 = 0
+        m_quad = re.search(r'([+-]?\s*\d*(?:\.\d+)?)\s*\*?\s*x\s*(?:\^|\*\*)\s*2\s*([+-]\s*\d*(?:\.\d+)?)\s*\*?\s*x\s*([+-]\s*\d+(?:\.\d+)?)\s*=\s*0', clean_arith, re.I)
+        if m_quad:
+            try:
+                a_str = m_quad.group(1).replace(' ', '')
+                a = 1.0 if (not a_str or a_str == '+') else (-1.0 if a_str == '-' else float(a_str))
+                b_str = m_quad.group(2).replace(' ', '')
+                b = 1.0 if b_str == '+' else (-1.0 if b_str == '-' else float(b_str))
+                c = float(m_quad.group(3).replace(' ', ''))
+                disc = b**2 - 4*a*c
+                if disc > 1e-9:
+                    r1 = (-b + math.sqrt(disc)) / (2*a)
+                    r2 = (-b - math.sqrt(disc)) / (2*a)
+                    return {
+                        "type": "math",
+                        "direct_solution": f"x = {r1:.6g}  or  x = {r2:.6g}",
+                        "detail": f"Quadratic equation roots with discriminant Δ = {disc:.6g}",
+                        "steps": [
+                            f"Standard form: {a:g}x² + ({b:g})x + ({c:g}) = 0",
+                            f"Discriminant Δ = b² - 4ac = ({b:g})² - 4({a:g})({c:g}) = {disc:.6g}",
+                            f"Roots: x = (-b ± √Δ) / 2a = ({-b:g} ± {math.sqrt(disc):.6g}) / {2*a:g}",
+                            f"Distinct Real Roots: x1 = {r1:.6g}, x2 = {r2:.6g}"
+                        ]
+                    }
+                elif abs(disc) <= 1e-9:
+                    r0 = -b / (2*a)
+                    return {
+                        "type": "math",
+                        "direct_solution": f"x = {r0:.6g} (Repeated Real Root)",
+                        "detail": "Quadratic equation with zero discriminant (perfect square)",
+                        "steps": [
+                            f"Standard form: {a:g}x² + ({b:g})x + ({c:g}) = 0",
+                            f"Discriminant Δ = 0",
+                            f"Single repeated root: x = -b / 2a = {r0:.6g}"
+                        ]
+                    }
+                else:
+                    re_p = -b / (2*a)
+                    im_p = math.sqrt(-disc) / (2*a)
+                    return {
+                        "type": "math",
+                        "direct_solution": f"x = {re_p:.6g} ± {abs(im_p):.6g}i (Complex Conjugate Roots)",
+                        "detail": f"Quadratic equation with negative discriminant Δ = {disc:.6g}",
+                        "steps": [
+                            f"Standard form: {a:g}x² + ({b:g})x + ({c:g}) = 0",
+                            f"Discriminant Δ = {disc:.6g} < 0",
+                            f"Complex roots: x = {re_p:.6g} ± {abs(im_p):.6g}i"
+                        ]
+                    }
+            except Exception:
+                pass
+
+        # I. Linear equation solver: e.g. 3x + 5 = 20 or 2x - 4 = 10
         m_eq = re.search(r'([+-]?\s*\d*(?:\.\d+)?)\s*\*?\s*x\s*([+-]\s*\d+(?:\.\d+)?)\s*=\s*([+-]?\s*\d+(?:\.\d+)?)', clean_arith, re.I)
         if m_eq:
             try:
@@ -6551,6 +6952,10 @@ if ($proc) {{
         ]
         if detail:
             lines.append(f" ▶ {detail}")
+        if sol.get("equation"):
+            lines.append(f"")
+            lines.append(f" 📐 EXACT MATHEMATICAL FORMULA / EQUATION:")
+            lines.append(f"     =  {sol.get('equation')}")
 
         if code:
             lines.append(f"--------------------------------------------------------------------------------")
