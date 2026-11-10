@@ -423,8 +423,17 @@ class UserConfigManager:
         prov_name = cls.get_llm_provider_display()
         url = cls.get_llm_chat_url()
         safe = cfg.get("safe_filter", "active").upper()
-        k = cfg.get("llm_api_key", "").strip()
-        k_disp = (k[:6] + "..." + k[-4:]) if len(k) > 10 else ("Configured" if k else "Not Set (Using Web/Browser Bridge)")
+        k_env = os.environ.get("GEMINI_API_KEY", "").strip()
+        k_cfg = cfg.get("llm_api_key", "").strip()
+        k = k_env or k_cfg
+        if k_env:
+            k_disp = "Configured via GEMINI_API_KEY env"
+        elif len(k_cfg) > 10:
+            k_disp = k_cfg[:6] + "..." + k_cfg[-4:]
+        elif k_cfg:
+            k_disp = "Configured"
+        else:
+            k_disp = "Not Set (Using Web/Browser Bridge)"
 
         return (
             "[SMART CALCULATOR USER PREFERENCES & LLM CONFIGURATION]\n"
@@ -1720,7 +1729,12 @@ class LockerSystem:
         if not self.entries:
             return "[-] Locker is empty. Nothing to export."
         try:
-            with open(filepath, "w", encoding="utf-8") as f:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            clean_name = os.path.basename(filepath.strip()) if filepath else "locker_dossier.txt"
+            if not clean_name or ".." in clean_name:
+                clean_name = "locker_dossier.txt"
+            safe_target = os.path.join(base_dir, clean_name)
+            with open(safe_target, "w", encoding="utf-8") as f:
                 f.write("================================================================================\n")
                 f.write("                     SMART CALCULUS LOCKER / DOSSIER EXPORT                      \n")
                 f.write(f"                     Exported on: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -1728,7 +1742,7 @@ class LockerSystem:
                 for k, item in self.entries.items():
                     f.write(self.format_card(item))
                     f.write("\n\n" + "="*80 + "\n\n")
-            return f"[+] Successfully exported {len(self.entries)} locker items to '{os.path.abspath(filepath)}'."
+            return f"[+] Successfully exported {len(self.entries)} locker items to '{safe_target}'."
         except Exception as e:
             return f"[-] Failed to export locker: {e}"
 
@@ -1948,14 +1962,73 @@ class MathEngine:
         return s.strip()
 
     @classmethod
-    def eval_at(cls, expr: str, x: float, extra_vars: dict = None) -> float:
+    def safe_eval_math(cls, expr: str, extra_vars: dict = None) -> float:
+        """
+        Safely evaluates mathematical expressions using strict AST parsing without eval() or exec().
+        Only allows arithmetic operators and whitelisted mathematical functions.
+        Prevents code execution, attribute access, and prototype pollution attacks.
+        """
         env = dict(cls.SAFE_ENV)
-        env["x"] = x
         if extra_vars:
             env.update(extra_vars)
+
         s = cls.clean_math_expr(expr)
+        if not s:
+            return float('nan')
+
         try:
-            val = eval(s, {"__builtins__": {}}, env)
+            tree = ast.parse(s, mode='eval')
+        except SyntaxError:
+            return float('nan')
+
+        op_map = {
+            ast.Add: lambda a, b: a + b,
+            ast.Sub: lambda a, b: a - b,
+            ast.Mult: lambda a, b: a * b,
+            ast.Div: lambda a, b: a / b,
+            ast.FloorDiv: lambda a, b: a // b,
+            ast.Mod: lambda a, b: a % b,
+            ast.Pow: lambda a, b: a ** b,
+            ast.UAdd: lambda a: +a,
+            ast.USub: lambda a: -a,
+        }
+
+        def _eval_node(node):
+            if isinstance(node, ast.Expression):
+                return _eval_node(node.body)
+            elif isinstance(node, ast.Constant):
+                if isinstance(node.value, (int, float, complex)):
+                    return node.value
+                raise ValueError("Disallowed constant")
+            elif isinstance(node, ast.Name):
+                if node.id in env:
+                    return env[node.id]
+                raise ValueError(f"Unknown variable: {node.id}")
+            elif isinstance(node, ast.BinOp):
+                op_cls = type(node.op)
+                if op_cls not in op_map:
+                    raise ValueError(f"Disallowed operator: {op_cls}")
+                left = _eval_node(node.left)
+                right = _eval_node(node.right)
+                if op_cls is ast.Pow and isinstance(right, (int, float)) and abs(right) > 1000:
+                    raise ValueError("Exponent limit exceeded")
+                return op_map[op_cls](left, right)
+            elif isinstance(node, ast.UnaryOp):
+                op_cls = type(node.op)
+                if op_cls not in op_map:
+                    raise ValueError(f"Disallowed unary operator: {op_cls}")
+                return op_map[op_cls](_eval_node(node.operand))
+            elif isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Name) and node.func.id in env and callable(env[node.func.id]):
+                    fn = env[node.func.id]
+                    args = [_eval_node(a) for a in node.args]
+                    return fn(*args)
+                raise ValueError("Disallowed function call")
+            else:
+                raise ValueError(f"Disallowed AST element: {type(node).__name__}")
+
+        try:
+            val = _eval_node(tree)
             if isinstance(val, complex):
                 if abs(val.imag) < 1e-12:
                     return float(val.real)
@@ -1965,6 +2038,13 @@ class MathEngine:
             return float('inf')
         except (ValueError, TypeError, OverflowError):
             return float('nan')
+
+    @classmethod
+    def eval_at(cls, expr: str, x: float, extra_vars: dict = None) -> float:
+        vars_dict = {"x": x}
+        if extra_vars:
+            vars_dict.update(extra_vars)
+        return cls.safe_eval_math(expr, vars_dict)
 
     @classmethod
     def eval_constant(cls, expr: str, extra_vars: dict = None) -> float:
@@ -3001,10 +3081,11 @@ class BacktrackingSymbolicIntegrator:
         # 1. Constant term
         if 'x' not in t_nospaces:
             try:
-                val = eval(t_nospaces.replace('^', '**'), {'pi': math.pi, 'e': math.e}) * sign
-                frac = Fraction(str(round(val, 6))).limit_denominator(1000)
-                rule = f"Constant Rule: integral ({raw_term}) dx = ({frac})*x"
-                return [(frac, "x")], rule
+                val = MathEngine.safe_eval_math(t_nospaces, {'pi': math.pi, 'e': math.e}) * sign
+                if not math.isnan(val) and not math.isinf(val):
+                    frac = Fraction(str(round(val, 6))).limit_denominator(1000)
+                    rule = f"Constant Rule: integral ({raw_term}) dx = ({frac})*x"
+                    return [(frac, "x")], rule
             except Exception:
                 pass
 
@@ -7001,7 +7082,9 @@ class SecureWebSolutionFinder:
                 ]
                 if x0_str:
                     try:
-                        x0_val = float(eval(x0_str.replace('pi', str(math.pi)).replace('e', str(math.e))))
+                        x0_val = MathEngine.safe_eval_math(x0_str)
+                        if math.isnan(x0_val) or math.isinf(x0_val):
+                            raise ValueError("Invalid x0")
                         slope_val = MathEngine.derivative_5point(diff_target, x0_val)
                         steps.append(f"Symbolic derivative derived: f'(x) = {sym_diff}")
                         steps.append(f"Evaluated slope at x0 = {x0_val:.4g}: m = {slope_val:.6g}")
@@ -7064,8 +7147,10 @@ class SecureWebSolutionFinder:
             a_str = m_def_int.group(2).strip()
             b_str = m_def_int.group(3).strip()
             try:
-                a_val = float(eval(a_str.replace('pi', str(math.pi)).replace('e', str(math.e))))
-                b_val = float(eval(b_str.replace('pi', str(math.pi)).replace('e', str(math.e))))
+                a_val = MathEngine.safe_eval_math(a_str)
+                b_val = MathEngine.safe_eval_math(b_str)
+                if math.isnan(a_val) or math.isnan(b_val) or math.isinf(a_val) or math.isinf(b_val):
+                    raise ValueError("Invalid integration bounds")
                 val, err, method = MathEngine.integrate_simpson(def_expr, a_val, b_val)
                 target_disp = f"∫ [{a_str} to {b_str}] {def_expr} dx"
                 res = {
@@ -7445,8 +7530,6 @@ class TerminalImageAndOCREngine:
             }
             req = urllib.request.Request(url_clean, headers=headers)
             ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
             with urllib.request.urlopen(req, timeout=10.0, context=ctx) as resp:
                 with open(local_path, "wb") as f:
                     f.write(resp.read())
@@ -7456,28 +7539,36 @@ class TerminalImageAndOCREngine:
         hd_bmp = os.path.join(temp_dir, "master_720p.bmp").replace(chr(92), "/")
         zoom_bmp = os.path.join(temp_dir, "zoom_resized.bmp").replace(chr(92), "/")
 
-        ps_code = f"""
+        ps_code = """
+param(
+    [string]$SrcPath,
+    [string]$OutBmpPath,
+    [string]$HdBmpPath,
+    [string]$ZoomBmpPath,
+    [int]$TargetWidth
+)
+
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
 
-$src = '{norm_path}'
+$src = $SrcPath
 $bmp = $null
 
-if ($src -eq 'CLIPBOARD') {{
-    if ([System.Windows.Forms.Clipboard]::ContainsImage()) {{
+if ($src -eq 'CLIPBOARD') {
+    if ([System.Windows.Forms.Clipboard]::ContainsImage()) {
         $bmp = [System.Windows.Forms.Clipboard]::GetImage()
-    }} else {{
+    } else {
         Write-Error "CLIPBOARD_NO_IMAGE"
         exit 1
-    }}
-}} else {{
-    if (Test-Path $src) {{
+    }
+} else {
+    if (Test-Path $src) {
         $bmp = [System.Drawing.Bitmap]::FromFile((Convert-Path $src))
-    }} else {{
+    } else {
         Write-Error "FILE_NOT_FOUND"
         exit 1
-    }}
-}}
+    }
+}
 
 $origW = $bmp.Width
 $origH = $bmp.Height
@@ -7494,20 +7585,20 @@ $gHd.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
 $gHd.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
 $gHd.DrawImage($bmp, 0, 0, $hdW, $hdH)
 $gHd.Dispose()
-$hdBmp.Save('{hd_bmp}', [System.Drawing.Imaging.ImageFormat]::Bmp)
+$hdBmp.Save($HdBmpPath, [System.Drawing.Imaging.ImageFormat]::Bmp)
 $hdBmp.Dispose()
 
 # 2. Save In-Terminal Viewport Copy with Exact 1:1 Pixel Aspect Ratio using Progressive Anti-Aliasing
-$targetW = {target_width}
+$targetW = $TargetWidth
 $targetH = [math]::Max(2, [int]([math]::Round($targetW / $aspectRatio)))
-if ($targetH % 2 -ne 0) {{ $targetH += 1 }}
+if ($targetH % 2 -ne 0) { $targetH += 1 }
 
 # Multi-step progressive downsampling prevents harsh pixel skipping & aliasing
 $currBmp = $bmp
 $currW = $origW
 $currH = $origH
 
-while ($currW -gt ($targetW * 2) -and $currH -gt ($targetH * 2)) {{
+while ($currW -gt ($targetW * 2) -and $currH -gt ($targetH * 2)) {
     $nextW = [int]($currW / 2)
     $nextH = [int]($currH / 2)
     $nextBmp = New-Object System.Drawing.Bitmap $nextW, $nextH, ([System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
@@ -7517,11 +7608,11 @@ while ($currW -gt ($targetW * 2) -and $currH -gt ($targetH * 2)) {{
     $gNext.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
     $gNext.DrawImage($currBmp, 0, 0, $nextW, $nextH)
     $gNext.Dispose()
-    if ($currBmp -ne $bmp) {{ $currBmp.Dispose() }}
+    if ($currBmp -ne $bmp) { $currBmp.Dispose() }
     $currBmp = $nextBmp
     $currW = $nextW
     $currH = $nextH
-}}
+}
 
 $resized = New-Object System.Drawing.Bitmap $targetW, $targetH, ([System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
 $g = [System.Drawing.Graphics]::FromImage($resized)
@@ -7531,15 +7622,15 @@ $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
 $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
 $g.DrawImage($currBmp, 0, 0, $targetW, $targetH)
 $g.Dispose()
-if ($currBmp -ne $bmp) {{ $currBmp.Dispose() }}
-$resized.Save('{out_bmp}', [System.Drawing.Imaging.ImageFormat]::Bmp)
+if ($currBmp -ne $bmp) { $currBmp.Dispose() }
+$resized.Save($OutBmpPath, [System.Drawing.Imaging.ImageFormat]::Bmp)
 $resized.Dispose()
 
 # 3. Save Formula & Text Focus Zoom Crop (2x Magnification)
 $hasZoom = 0
 $zoomW = [int]($origW * 0.70)
 $zoomH = [int]($origH * 0.50)
-if ($zoomW -gt 15 -and $zoomH -gt 15) {{
+if ($zoomW -gt 15 -and $zoomH -gt 15) {
     $srcX = [int](($origW - $zoomW) / 2)
     $srcY = [int](($origH - $zoomH) * 0.35)
     $srcRect = New-Object System.Drawing.Rectangle $srcX, $srcY, $zoomW, $zoomH
@@ -7550,7 +7641,7 @@ if ($zoomW -gt 15 -and $zoomH -gt 15) {{
 
     $zAspect = $zoomW / [double]$zoomH
     $zTermH = [math]::Max(2, [int]([math]::Round($targetW / $zAspect)))
-    if ($zTermH % 2 -ne 0) {{ $zTermH += 1 }}
+    if ($zTermH % 2 -ne 0) { $zTermH += 1 }
 
     $zResized = New-Object System.Drawing.Bitmap $targetW, $zTermH, ([System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
     $gZ = [System.Drawing.Graphics]::FromImage($zResized)
@@ -7561,10 +7652,10 @@ if ($zoomW -gt 15 -and $zoomH -gt 15) {{
     $gZ.DrawImage($zoomCrop, 0, 0, $targetW, $zTermH)
     $gZ.Dispose()
     $zoomCrop.Dispose()
-    $zResized.Save('{zoom_bmp}', [System.Drawing.Imaging.ImageFormat]::Bmp)
+    $zResized.Save($ZoomBmpPath, [System.Drawing.Imaging.ImageFormat]::Bmp)
     $zResized.Dispose()
     $hasZoom = 1
-}}
+}
 
 $bmp.Dispose()
 Write-Output "DIMS:$origW,$origH,$hdW,$hdH,$targetW,$targetH,$hasZoom"
@@ -7573,7 +7664,15 @@ Write-Output "DIMS:$origW,$origH,$hdW,$hdH,$targetW,$targetH,$hasZoom"
         with open(ps_script, "w", encoding="utf-8") as f:
             f.write(ps_code)
 
-        res = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps_script], capture_output=True, text=True, encoding="utf-8", errors="replace")
+        res = subprocess.run([
+            "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", ps_script,
+            "-SrcPath", norm_path,
+            "-OutBmpPath", out_bmp,
+            "-HdBmpPath", hd_bmp,
+            "-ZoomBmpPath", zoom_bmp,
+            "-TargetWidth", str(target_width)
+        ], capture_output=True, text=True, encoding="utf-8", errors="replace")
         if res.returncode != 0:
             err = res.stderr.strip()
             if "CLIPBOARD_NO_IMAGE" in err:
@@ -7960,8 +8059,6 @@ try {{
 
         results = []
         ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
 
         headers_browser = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
@@ -8105,7 +8202,7 @@ try {{
             try:
                 ns = dict(safe_ns)
                 ns['x'] = x_val
-                val = eval(clean, {'__builtins__': {}}, ns)
+                val = MathEngine.safe_eval_math(clean, ns)
                 if isinstance(val, (int, float)) and not math.isnan(val) and not math.isinf(val):
                     return float(val)
             except Exception:
@@ -8828,8 +8925,13 @@ class GeminiAndBrowserEngine:
         url = target_url or cls.get_session_url()
         cls.set_clipboard(prompt)
 
-        proc_list = BrowserManager.get_proc_names_for_target("llm")
-        proc_str = ", ".join(proc_list) if proc_list else "msedge, chrome"
+        proc_raw = BrowserManager.get_proc_names_for_target("llm")
+        if isinstance(proc_raw, str):
+            raw_list = [p.strip() for p in proc_raw.split(",") if p.strip()]
+        else:
+            raw_list = list(proc_raw)
+        clean_procs = [re.sub(r'[^a-zA-Z0-9_-]', '', p) for p in raw_list if p.strip()]
+        proc_str = ", ".join(clean_procs) if clean_procs else "msedge, chrome"
 
         ps_script = f"""
 Add-Type -AssemblyName Microsoft.VisualBasic
@@ -8839,8 +8941,6 @@ if ($proc) {{
     [Microsoft.VisualBasic.Interaction]::AppActivate($proc.Id)
     Start-Sleep -Milliseconds 400
     [System.Windows.Forms.SendKeys]::SendWait("^v")
-    Start-Sleep -Milliseconds 200
-    [System.Windows.Forms.SendKeys]::SendWait("{{ENTER}}")
     Write-Output "SENT"
 }} else {{
     Write-Output "NO_BROWSER"
@@ -9119,8 +9219,10 @@ if ($proc) {{
             a_str = m_def_int.group(2).strip()
             b_str = m_def_int.group(3).strip()
             try:
-                a_val = float(eval(a_str.replace('pi', str(math.pi)).replace('e', str(math.e))))
-                b_val = float(eval(b_str.replace('pi', str(math.pi)).replace('e', str(math.e))))
+                a_val = MathEngine.safe_eval_math(a_str)
+                b_val = MathEngine.safe_eval_math(b_str)
+                if math.isnan(a_val) or math.isnan(b_val) or math.isinf(a_val) or math.isinf(b_val):
+                    raise ValueError("Invalid integration bounds")
                 val, err, method = MathEngine.integrate_simpson(def_expr, a_val, b_val)
                 return {
                     "type": "math",
@@ -9144,7 +9246,9 @@ if ($proc) {{
             try:
                 sym_d = SymbolicMathEngine.get_symbolic_derivative(diff_expr)
                 if x0_str:
-                    x0_val = float(eval(x0_str.replace('pi', str(math.pi)).replace('e', str(math.e))))
+                    x0_val = MathEngine.safe_eval_math(x0_str)
+                    if math.isnan(x0_val) or math.isinf(x0_val):
+                        raise ValueError("Invalid x0 value")
                     slope_val = MathEngine.derivative_5point(diff_expr, x0_val)
                     return {
                         "type": "math",
@@ -9189,9 +9293,8 @@ if ($proc) {{
         clean_arith = re.sub(r'^(?:what\s+is|calculate|eval|compute|solve|find)\s+', '', prompt, flags=re.I).rstrip('?').strip()
         if re.match(r'^[0-9\s.+\-*/^()%]+$', clean_arith) and any(op in clean_arith for op in '+-*/^%'):
             try:
-                py_expr = clean_arith.replace('^', '**')
-                val = eval(py_expr, {'__builtins__': {}}, {})
-                if isinstance(val, (int, float)):
+                val = MathEngine.safe_eval_math(clean_arith)
+                if isinstance(val, (int, float)) and not math.isnan(val) and not math.isinf(val):
                     return {
                         "type": "math",
                         "direct_solution": f"{clean_arith} = {val:.10g}",

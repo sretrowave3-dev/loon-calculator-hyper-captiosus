@@ -30,3 +30,6 @@ id_ed25519*
 *.pyc
 .DS_Store
 Thumbs.db
+
+# Local audit scripts
+repo_privacy_audit.sh
